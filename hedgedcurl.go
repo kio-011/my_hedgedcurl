@@ -19,18 +19,22 @@
         req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 
         if err != nil {
-            ch <- Info{err, nil}
+            ch <- Info{err : err, resp : nil}
             return
         }
 
         res, err := http.DefaultClient.Do(req)
         
         if err != nil {
-            ch <- Info{err, nil}
+            ch <- Info{err : err, resp : nil}
             return
         }
-
-        ch <- Info{nil, res}
+        select {
+        case ch <- Info{err : nil, resp : res}:
+        case <-ctx.Done():
+            res.Body.Close()
+        }
+        
     }
 
     func main () {
@@ -57,45 +61,46 @@
 
         count := 0
         for {
-            select {
-            case result := <-buffer: 
-                if result.err != nil {
-                    count++
+            result := <- buffer
 
-                    if count == len(urls) {
-                        fmt.Fprintln(os.Stderr, "все запросы завершились ошибкой")
-                        os.Exit(2)
-                    }
-
-                } else {
-                    fmt.Println(result.resp.Status)
-                    fmt.Println(result.resp.Header)
-
-                    byts, err := io.ReadAll(result.resp.Body)
-                    result.resp.Body.Close()
-
-                    if err != nil {
-                        fmt.Fprintln(os.Stderr, err)
-                        os.Exit(2)
-                    } else {
-                        fmt.Println(string(byts))
-                    }
-                    
-                    for {
-                        select {
-                        case r := <-buffer:
-                            if r.resp != nil {
-                                r.resp.Body.Close()
-                            }
-                        default:
-                            return
-                        }
-                    }
-                }
-                
-            case <-ctx.Done():
+            if ctx.Err() == context.DeadlineExceeded {
                 os.Exit(228)
             }
+
+            if result.err != nil {
+                count++
+
+                if count == len(urls) {
+                    fmt.Fprintln(os.Stderr, "все запросы завершились ошибкой")
+                    os.Exit(2)
+                }
+
+            } else {
+                fmt.Println(result.resp.Status)
+                fmt.Println(result.resp.Header)
+
+                byts, err := io.ReadAll(result.resp.Body)
+                result.resp.Body.Close()
+
+                if err != nil {
+                    fmt.Fprintln(os.Stderr, err)
+                    os.Exit(2)
+                } else {
+                    fmt.Println(string(byts))
+                }
+                
+                for {
+                    select {
+                    case r := <-buffer:
+                        if r.resp != nil {
+                            r.resp.Body.Close()
+                        }
+                    default:
+                        return
+                    }
+                }
+            }
+
         }
         
     }
